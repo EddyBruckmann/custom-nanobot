@@ -1,0 +1,81 @@
+# ============================================================
+# Dockerfile.nelson — NanoBot + Wrapper HTTP + Patches
+# Buildea desde source (repo clonado) + agrega customizaciones
+# ============================================================
+
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+# --- Node.js 20 (para el WhatsApp bridge) ---
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates gnupg git && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends nodejs && \
+    apt-get purge -y gnupg && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# --- Python deps (cached layer) ---
+COPY pyproject.toml README.md LICENSE ./
+RUN mkdir -p nanobot bridge && touch nanobot/__init__.py && \
+    uv pip install --system --no-cache . && \
+    rm -rf nanobot bridge
+
+# --- Source + install ---
+COPY nanobot/ nanobot/
+COPY bridge/ bridge/
+RUN uv pip install --system --no-cache .
+
+# --- WhatsApp bridge ---
+WORKDIR /app/bridge
+RUN npm install && npm run build
+WORKDIR /app
+
+# --- Config dir ---
+RUN mkdir -p /root/.nanobot
+
+# ============================================================
+# === Customizaciones Nelson ===
+# ============================================================
+
+# Flask para el wrapper HTTP (workaround Issue #510)
+RUN pip install --no-cache-dir flask
+
+# Wrapper HTTP server
+COPY wrapper/nanobot_wrapper.py /app/nanobot_wrapper.py
+
+# Memory manager (compresion jerarquica de historial)
+COPY wrapper/memory_manager.py /app/memory_manager.py
+RUN pip install --no-cache-dir requests
+
+# Entrypoint: gateway + wrapper juntos
+COPY wrapper/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Patch CLI: prefijo "Eddy:" + quitar "Goodbye!"
+COPY patches/patch_cli.py /tmp/patch_cli.py
+RUN python3 /tmp/patch_cli.py || true
+
+# Patch branding: 🐈 → 🥃, "nanobot" → "Nelson" en mensajes de gateway/CLI
+COPY patches/patch_branding.py /tmp/patch_branding.py
+RUN python3 /tmp/patch_branding.py || true
+
+
+# Instalar el mcp de google workspace
+# Pre-instalar MCP google (evita npx en runtime)
+RUN npm install -g mcp-google
+
+# Patches registry (no necesarios con provider custom, para el futuro)
+# COPY patches/patch.py /tmp/patch.py
+# RUN python3 /tmp/patch.py || true
+# COPY patches/patch2.py /tmp/patch2.py
+# RUN python3 /tmp/patch2.py || true
+
+EXPOSE 18790
+
+ENTRYPOINT []
+CMD ["/app/entrypoint.sh"]
