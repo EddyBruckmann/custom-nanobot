@@ -65,7 +65,9 @@ COPY patches/patch_branding.py /tmp/patch_branding.py
 RUN python3 /tmp/patch_branding.py || true
 
 
-# Instalar el mcp de google workspace
+# Routing config (se copia como default, el volumen puede sobreescribir)
+COPY routing.json /app/routing.json.default
+
 # Pre-instalar MCP google (evita npx en runtime)
 RUN npm install -g mcp-google
 

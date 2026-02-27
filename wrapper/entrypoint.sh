@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# Copiar routing.json si no existe en el volumen
+if [ ! -f /root/.nanobot/routing.json ]; then
+    cp /app/routing.json.default /root/.nanobot/routing.json
+fi
+
 echo "=== Starting NanoBot gateway (background) ==="
 nanobot gateway &
 GATEWAY_PID=$!
