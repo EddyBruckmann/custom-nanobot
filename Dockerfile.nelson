@@ -52,6 +52,10 @@ COPY wrapper/nanobot_wrapper.py /app/nanobot_wrapper.py
 COPY wrapper/memory_manager.py /app/memory_manager.py
 RUN pip install --no-cache-dir requests
 
+# Router v0: multi-tier provider routing (patchea base.py + loop.py)
+COPY patches/patch_router.py /tmp/patch_router.py
+RUN python3 /tmp/patch_router.py
+
 # Entrypoint: gateway + wrapper juntos
 COPY wrapper/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

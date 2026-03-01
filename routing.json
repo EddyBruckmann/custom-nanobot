@@ -1,0 +1,38 @@
+{
+  "strategy": "cascade",
+  "cooldownSeconds": 60,
+  "fallbackMessage": "Estoy saturado, probá en un rato \ud83e\udd43",
+  "providers": [
+    {
+      "name": "cerebras-8b",
+      "apiBase": "https://api.cerebras.ai/v1",
+      "apiKeyEnv": "CEREBRAS_API_KEY",
+      "model": "llama3.1-8b",
+      "contextWindow": 8000,
+      "tpm": 60000,
+      "capabilities": ["chat"],
+      "priority": 0,
+      "note": "Tier 0: chat only, sin tools. El router le stripea tools del request."
+    },
+    {
+      "name": "cerebras",
+      "apiBase": "https://api.cerebras.ai/v1",
+      "apiKeyEnv": "CEREBRAS_API_KEY",
+      "model": "gpt-oss-120b",
+      "contextWindow": 65000,
+      "tpm": 60000,
+      "capabilities": ["chat", "tools"],
+      "priority": 1
+    },
+    {
+      "name": "groq",
+      "apiBase": "https://api.groq.com/openai/v1",
+      "apiKeyEnv": "GROQ_API_KEY",
+      "model": "llama-3.3-70b-versatile",
+      "contextWindow": 128000,
+      "tpm": 30000,
+      "capabilities": ["chat", "tools"],
+      "priority": 2
+    }
+  ]
+}
