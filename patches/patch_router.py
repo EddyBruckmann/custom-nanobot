@@ -1,23 +1,59 @@
 #!/usr/bin/env python3
 """
-Patch: Multi-Tier Provider Router v0
+Patch: Multi-Tier Provider Router v2
 Modifica base.py y loop.py para agregar routing multi-provider.
 
+IMPORTANTE: patchea site-packages (donde 'nanobot' realmente importa),
+NO /app/ (que es solo el source tree). El comando 'nanobot' es un console
+script que importa desde site-packages.
+
 Archivos que toca:
-  /app/nanobot/providers/base.py  — agrega routed_chat() a LLMProvider
-  /app/nanobot/agent/loop.py      — reemplaza .chat( por .routed_chat(
+  site-packages/nanobot/providers/base.py  — agrega routed_chat() a LLMProvider
+  site-packages/nanobot/agent/loop.py      — reemplaza .chat( por .routed_chat(
 """
+
+import glob
+import sys
+
+# ==========================================
+# Detectar paths de site-packages
+# ==========================================
+
+def _find_site_packages_file(subpath):
+    """Busca un archivo en site-packages de nanobot."""
+    # Intentar site-packages primero (donde nanobot realmente importa)
+    matches = glob.glob(f"/usr/local/lib/python*/site-packages/nanobot/{subpath}")
+    if matches:
+        return matches[0]
+    # Fallback a /app/ (por si la estructura cambia)
+    fallback = f"/app/nanobot/{subpath}"
+    import os
+    if os.path.exists(fallback):
+        print(f"WARNING: usando fallback /app/ — verificar que nanobot importa desde ahí")
+        return fallback
+    return None
+
+BASE_PATH = _find_site_packages_file("providers/base.py")
+LOOP_PATH = _find_site_packages_file("agent/loop.py")
+
+if not BASE_PATH:
+    print("ROUTER PATCH: ERROR — base.py no encontrado en site-packages ni /app/")
+    sys.exit(1)
+if not LOOP_PATH:
+    print("ROUTER PATCH: ERROR — loop.py no encontrado en site-packages ni /app/")
+    sys.exit(1)
+
+print(f"ROUTER PATCH: base.py -> {BASE_PATH}")
+print(f"ROUTER PATCH: loop.py -> {LOOP_PATH}")
 
 # ==========================================
 # PATCH 1: base.py — agregar routed_chat()
 # ==========================================
 
-BASE_PATH = "/app/nanobot/providers/base.py"
-
 ROUTER_CODE = '''
 
 # ================================================================
-# === Router v0: Multi-Tier Provider Routing ===
+# === Router v2: Multi-Tier Provider Routing ===
 # ================================================================
 import json as _json
 import os as _os
@@ -117,9 +153,8 @@ async def _routed_chat(self, messages, tools=None, model=None, **kwargs):
     for pcfg in providers:
         caps = pcfg.get("capabilities", [])
 
-        # Skip: necesita tools pero este tier es chat-only
-        if has_tools and "tools" not in caps:
-            continue
+        # v2: detectar tier chat-only (no skipear, strip tools + refusal detection)
+        is_chatonly_tier = "tools" not in caps
 
         # Skip: en cooldown
         if _cooldowns.get(pcfg["name"], 0) > now:
@@ -141,14 +176,27 @@ async def _routed_chat(self, messages, tools=None, model=None, **kwargs):
 
         try:
             resp = await client.chat.completions.create(**call_kwargs)
-            return _parse_tier_response(resp)
+            resp_parsed = _parse_tier_response(resp)
+            # v2: si un tier chat-only recibió un request que originalmente
+            # tenía tools, verificar si la respuesta es un rechazo/incapacidad.
+            # Si lo es → escalar al siguiente tier (que sí tenga tools).
+            if is_chatonly_tier and has_tools:
+                c = (resp_parsed.content or "").lower()
+                _refusal = ("no puedo", "no tengo acceso", "no tengo herramienta",
+                            "i can't", "i don't have", "unable to", "no cuento con",
+                            "no dispongo", "herramienta", "tool", "function",
+                            "no es posible", "no tengo la capacidad")
+                if any(h in c for h in _refusal) or len(c.strip()) < 2:
+                    continue  # escalar al siguiente tier
+            return resp_parsed
         except Exception as e:
             err = str(e).lower()
             if any(kw in err for kw in ("429", "rate limit", "rate_limit",
                                          "too many", "tokens per minute")):
                 _cooldowns[pcfg["name"]] = now + cooldown_secs
             elif any(kw in err for kw in ("context length", "too long",
-                                           "maximum context")):
+                                           "maximum context", "413",
+                                           "request too large")):
                 _cooldowns[pcfg["name"]] = now + cooldown_secs
             else:
                 _cooldowns[pcfg["name"]] = now + (cooldown_secs // 4)
@@ -170,19 +218,17 @@ with open(BASE_PATH) as f:
     code = f.read()
 
 if "_routed_chat" in code:
-    print("ROUTER PATCH base.py: SKIP — already patched")
+    print(f"ROUTER PATCH base.py: SKIP — already patched ({BASE_PATH})")
 else:
     code += ROUTER_CODE
     with open(BASE_PATH, "w") as f:
         f.write(code)
-    print("ROUTER PATCH base.py: OK — appended routed_chat()")
+    print(f"ROUTER PATCH base.py: OK — appended routed_chat() ({BASE_PATH})")
 
 
 # ==========================================
 # PATCH 2: loop.py — usar routed_chat()
 # ==========================================
-
-LOOP_PATH = "/app/nanobot/agent/loop.py"
 
 with open(LOOP_PATH) as f:
     loop_code = f.read()
@@ -191,12 +237,12 @@ OLD = "await self.provider.chat("
 NEW = "await self.provider.routed_chat("
 
 if NEW in loop_code:
-    print("ROUTER PATCH loop.py: SKIP — already patched")
+    print(f"ROUTER PATCH loop.py: SKIP — already patched ({LOOP_PATH})")
 elif OLD in loop_code:
     # Solo reemplazar la primera ocurrencia (en _run_agent_loop)
     loop_code = loop_code.replace(OLD, NEW, 1)
     with open(LOOP_PATH, "w") as f:
         f.write(loop_code)
-    print("ROUTER PATCH loop.py: OK — .chat( -> .routed_chat(")
+    print(f"ROUTER PATCH loop.py: OK — .chat( -> .routed_chat( ({LOOP_PATH})")
 else:
-    print("ROUTER PATCH loop.py: FAILED — pattern not found")
+    print(f"ROUTER PATCH loop.py: FAILED — pattern not found ({LOOP_PATH})")
